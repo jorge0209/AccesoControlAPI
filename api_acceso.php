@@ -3,9 +3,9 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
-header("Content-Type: application/json; charset=utf-8");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
+header("Content-Type: application/json");
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -15,119 +15,193 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 $pdo = getPDO();
 
-// Leer JSON que envía Ionic
-$input = json_decode(file_get_contents('php://input'), true);
+// Leer JSON desde Ionic
+$input = json_decode(file_get_contents("php://input"), true);
 
 if (!is_array($input)) {
-    http_response_code(400);
     echo json_encode(["success" => false, "message" => "JSON inválido"]);
     exit;
 }
 
-$num_cedula   = trim($input["num_cedula"]   ?? "");
-$tipo         = trim($input["tipo"]         ?? ""); // entrada / salida
+$num_cedula   = trim($input["num_cedula"] ?? "");
+$tipo         = trim($input["tipo"] ?? "");
 $areaDestino  = trim($input["area_destino"] ?? "");
 
 if ($num_cedula === "" || $tipo === "" || $areaDestino === "") {
-    http_response_code(400);
     echo json_encode([
         "success" => false,
-        "message" => "Debe enviar cédula, tipo de acceso y área de destino."
+        "message" => "Debe enviar cédula, tipo y área destino."
     ]);
     exit;
 }
 
-// Normalizamos
-$tipoUpper = strtoupper($tipo); // ENTRADA / SALIDA
-$areaEnum  = $areaDestino;      // Ya viene como ENUM válido desde el select
+$tipoUpper = strtoupper($tipo);
+
+// =============================
+// PERMISOS POR TIPO DE PERSONA
+// =============================
+
+$permisos = [
+    "ESTUDIANTE" => [
+        "ENTRADA_PRINCIPAL","AULAS","BIBLIOTECA","LABORATORIOS",
+        "CAFETERIA","AUDITORIO","GIMNASIO","ESTACIONAMIENTO",
+        "AREA_DEPORTIVA","LABORATORIO_COMPUTO"
+    ],
+
+    "PROFESOR" => [
+        "ENTRADA_PRINCIPAL","AULAS","BIBLIOTECA","LABORATORIOS",
+        "CAFETERIA","AUDITORIO","ESTACIONAMIENTO","AREA_DEPORTIVA",
+        "SALA_PROFESORES","LABORATORIO_COMPUTO"
+    ],
+
+    "EMPLEADO" => [
+        "ENTRADA_PRINCIPAL","AULAS","BIBLIOTECA","LABORATORIOS",
+        "OFICINAS_ADMIN","CAFETERIA","AUDITORIO","GIMNASIO",
+        "ESTACIONAMIENTO","AREA_DEPORTIVA","SALA_PROFESORES",
+        "LABORATORIO_COMPUTO"
+    ],
+
+    "VISITANTE" => [
+        "ENTRADA_PRINCIPAL","AUDITORIO","ESTACIONAMIENTO",
+        "AREA_DEPORTIVA","OFICINAS_ADMIN","SALA_PROFESORES"
+    ]
+];
 
 try {
-    // 1) Buscar la credencial y el tipo_persona
+
+    // 1) Verificar usuario
     $stmt = $pdo->prepare("
         SELECT id, nombre, apellido, tipo_persona
         FROM credenciales
         WHERE num_cedula = :cedula
     ");
     $stmt->execute([":cedula" => $num_cedula]);
-    $credencial = $stmt->fetch(PDO::FETCH_ASSOC);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$credencial) {
+    if (!$user) {
+        echo json_encode(["success" => false, "message" => "Cédula no encontrada."]);
+        exit;
+    }
+
+    $credencialId = $user["id"];
+    $tipoPersona = $user["tipo_persona"]; // ESTUDIANTE, PROFESOR…
+
+    // ======================================
+    // VALIDACIÓN 1: ¿Puede entrar a esa área?
+    // ======================================
+
+    if (!in_array($areaDestino, $permisos[$tipoPersona])) {
         echo json_encode([
             "success" => false,
-            "message" => "No existe un usuario con esa cédula."
+            "message" => "Los {$tipoPersona}s NO pueden acceder al área {$areaDestino}."
         ]);
         exit;
     }
 
-    $credencialId = (int)$credencial["id"];
-    $tipoPersona  = $credencial["tipo_persona"]; // ESTUDIANTE / PROFESOR / ...
+    // =================================================
+    // VALIDACIÓN 2: ¿Está actualmente dentro de un área?
+    // =================================================
 
-    // 2) Insertar en registro_accesos (usando estructura real de la tabla)
-    $sqlInsert = "
+    // Saber si hubo una entrada sin salida
+    $stmt2 = $pdo->prepare("
+        SELECT area, tipo_acceso, fecha_hora
+        FROM registro_accesos
+        WHERE credencial_id = :cid
+        ORDER BY fecha_hora DESC
+        LIMIT 1
+    ");
+
+    $stmt2->execute([":cid" => $credencialId]);
+    $last = $stmt2->fetch(PDO::FETCH_ASSOC);
+
+    $estaDentro = false;
+    $ultimaArea = null;
+
+    if ($last) {
+        if ($last["tipo_acceso"] === "ENTRADA") {
+            $estaDentro = true;
+            $ultimaArea = $last["area"];
+        }
+    }
+
+    // Si intenta entrar a un área distinta sin salir primero
+    if ($tipoUpper === "ENTRADA" && $estaDentro && $ultimaArea !== $areaDestino) {
+        echo json_encode([
+            "success" => false,
+            "message" => "Debe salir de {$ultimaArea} antes de entrar a {$areaDestino}."
+        ]);
+        exit;
+    }
+
+    // =============================
+    // GUARDAR REGISTRO CORRECTO
+    // =============================
+
+    $sql = "
         INSERT INTO registro_accesos
             (credencial_id, tipo_persona, tipo_acceso, area, fecha_hora, acceso_permitido, observacion)
         VALUES
-            (:credencial_id, :tipo_persona, :tipo_acceso, :area, NOW(), :acceso_permitido, :observacion)
+            (:cid, :tipo_persona, :tipo_acceso, :area, NOW(), 1, 'OK')
     ";
 
-    $stmtIns = $pdo->prepare($sqlInsert);
-    $stmtIns->execute([
-        ":credencial_id"    => $credencialId,
-        ":tipo_persona"     => $tipoPersona,
-        ":tipo_acceso"      => $tipoUpper,    // ENTRADA / SALIDA
-        ":area"             => $areaEnum,     // uno de los ENUM de `area`
-        ":acceso_permitido" => 1,
-        ":observacion"      => "Acceso registrado correctamente",
+    $pdo->prepare($sql)->execute([
+        ":cid"          => $credencialId,
+        ":tipo_persona" => $tipoPersona,
+        ":tipo_acceso"  => $tipoUpper,
+        ":area"         => $areaDestino,
     ]);
 
-    // 3) Calcular personas en campus
+    // =============================
+    // CÁLCULO DE PERSONAS EN CAMPUS
+    // =============================
+
     $sqlCount = "
         SELECT
-          SUM(CASE WHEN tipo_acceso = 'ENTRADA' THEN 1 ELSE 0 END) -
-          SUM(CASE WHEN tipo_acceso = 'SALIDA'  THEN 1 ELSE 0 END) AS personas_campus
+            SUM(CASE WHEN tipo_acceso = 'ENTRADA' THEN 1 ELSE 0 END) -
+            SUM(CASE WHEN tipo_acceso = 'SALIDA'  THEN 1 ELSE 0 END)
         FROM registro_accesos
     ";
-    $personasCampus = (int)($pdo->query($sqlCount)->fetchColumn() ?? 0);
 
-    // 4) Obtener último acceso
+    $personasCampus = (int)$pdo->query($sqlCount)->fetchColumn();
+
+    // =============================
+    // ÚLTIMO ACCESO (FORMATEADO)
+    // =============================
+
     $sqlLast = "
-        SELECT ra.fecha_hora,
-               ra.tipo_acceso,
-               ra.area,
-               c.nombre,
-               c.apellido
+        SELECT ra.fecha_hora, ra.tipo_acceso, ra.area,
+               c.nombre, c.apellido
         FROM registro_accesos ra
         JOIN credenciales c ON c.id = ra.credencial_id
         ORDER BY ra.fecha_hora DESC
         LIMIT 1
     ";
-    $last = $pdo->query($sqlLast)->fetch(PDO::FETCH_ASSOC);
 
-    $ultimoTexto = null;
-    if ($last) {
-        $nombre  = $last["nombre"];
-        $apell   = $last["apellido"];
-        $area    = $last["area"];             // p.ej. AUDITORIO
-        $tipoTxt = ($last["tipo_acceso"] === 'ENTRADA') ? 'entró' : 'salió';
+    $l = $pdo->query($sqlLast)->fetch(PDO::FETCH_ASSOC);
 
-        $fechaObj = new DateTime($last["fecha_hora"]);
-        $fechaFmt = $fechaObj->format('d/m/Y H:i');
-
-        $ultimoTexto = "{$nombre} {$apell} {$tipoTxt} por {$area} el {$fechaFmt}";
+    $txt = null;
+    if ($l) {
+        $tipoTxt = $l["tipo_acceso"] === "ENTRADA" ? "entró" : "salió";
+        $fecha = (new DateTime($l["fecha_hora"]))->format("d/m/Y H:i");
+        $txt = "{$l['nombre']} {$l['apellido']} {$tipoTxt} por {$l['area']} el {$fecha}";
     }
 
-    echo json_encode([
-        "success"            => true,
-        "message"            => "Acceso registrado correctamente.",
-        "personas_en_campus" => $personasCampus,
-        "ultimo_acceso"      => $ultimoTexto,
-    ]);
+    $mensaje = ($tipoUpper === "SALIDA")
+    ? "Salida registrada correctamente."
+    : "Entrada registrada correctamente.";
 
-} catch (PDOException $e) {
-    http_response_code(500);
+echo json_encode([
+    "success" => true,
+    "message" => $mensaje,
+    "personas_en_campus" => $personasCampus,
+    "ultimo_acceso" => $txt
+]);
+
+
+} catch (Exception $e) {
     echo json_encode([
         "success" => false,
-        "message" => "Error interno al registrar acceso",
+        "message" => "ERROR INTERNO",
         "error"   => $e->getMessage()
     ]);
 }
