@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 $pdo = getPDO();
 
-// Leer JSON
+// Lee el JSON
 $input = json_decode(file_get_contents('php://input'), true);
 if (!is_array($input)) {
     echo json_encode([
@@ -35,7 +35,7 @@ if ($num_cedula === '') {
 }
 
 try {
-    // 1) Buscar al usuario en credenciales
+    // Buscar al usuario en credenciales
     $sqlCred = "
         SELECT
           id,
@@ -64,7 +64,7 @@ try {
     $tipo         = $user['tipo_persona']; // ESTUDIANTE / PROFESOR / EMPLEADO / VISITANTE
     $detalle      = '';
 
-    // 2) Buscar datos adicionales según tipo_persona
+    // Buscar datos adicionales según tipo_persona
     switch ($tipo) {
         case 'ESTUDIANTE':
             $sqlEst = "
@@ -170,6 +170,6 @@ try {
     echo json_encode([
         'success' => false,
         'message' => 'Error interno al obtener el carnet.',
-        'error'   => $e->getMessage(), // útil para debug en Postman/navegador
+        'error'   => $e->getMessage(), 
     ]);
 }

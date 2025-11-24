@@ -33,12 +33,12 @@ $tipo_persona = trim($input['tipo_persona'] ?? '');
 // Campos dinámicos que vienen del formulario Ionic
 $carrera               = $input['carrera']               ?? null;
 $semestre              = $input['semestre']              ?? null;
-$departamento          = $input['departamento']          ?? null; // profesor
-$cargo                 = $input['cargo']                 ?? null; // empleado
-$departamento_empleado = $input['departamento_empleado'] ?? null; // empleado
-$motivo                = $input['motivo']                ?? null; // visitante
-$persona_visita        = $input['persona_visita']        ?? null; // visitante
-$empresa               = $input['empresa']               ?? null; // visitante (si lo agregas en el form)
+$departamento          = $input['departamento']          ?? null; 
+$cargo                 = $input['cargo']                 ?? null; 
+$departamento_empleado = $input['departamento_empleado'] ?? null; 
+$motivo                = $input['motivo']                ?? null; 
+$persona_visita        = $input['persona_visita']        ?? null; 
+$empresa               = $input['empresa']               ?? null; 
 
 // ================= VALIDACIONES BÁSICAS =================
 if (
@@ -72,8 +72,8 @@ if (!in_array($tipo_persona, $permitidos, true)) {
     exit;
 }
 
-// En un proyecto real deberíamos encriptar la contraseña:
-$hash = $contrasena; // aquí la dejamos tal cual para respetar tu proyecto original
+
+$hash = $contrasena;
 
 try {
     // Usamos transacción: o se guarda todo, o nada
@@ -134,7 +134,7 @@ try {
         case 'EMPLEADO':
             // Tabla: empleados (credencial_id, departamento, area_laboral, cargo)
             // Usamos departamento_empleado para 'departamento'
-            // y dejamos area_laboral NULL (o puedes duplicar el valor)
+            // y dejamos area_laboral NULL
             $depEmp = $departamento_empleado ?: null;
             $sqlEmp = "INSERT INTO empleados (credencial_id, departamento, area_laboral, cargo)
                        VALUES (:credencial_id, :departamento, :area_laboral, :cargo)";
@@ -142,7 +142,7 @@ try {
             $stmtEmp->execute([
                 ':credencial_id' => $credencialId,
                 ':departamento'  => $depEmp,
-                ':area_laboral'  => null,   // aquí podrías poner otro campo si lo agregas al formulario
+                ':area_laboral'  => null,   
                 ':cargo'         => $cargo,
             ]);
             $detalles['empleado_id'] = (int)$pdo->lastInsertId();
@@ -161,7 +161,7 @@ try {
                 ':persona_visitar'     => $persona_visita,
                 ':empresa_organizacion'=> $empresa,
                 ':fecha_visita'        => date('Y-m-d'),
-                ':autorizacion_previa' => 1, // puedes cambiar esto si en el form agregas un checkbox
+                ':autorizacion_previa' => 1, // Por defecto, 1 = sí
             ]);
             $detalles['visitante_id'] = (int)$pdo->lastInsertId();
             break;

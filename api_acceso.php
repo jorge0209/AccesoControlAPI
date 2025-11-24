@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 $pdo = getPDO();
 
-// Leer JSON desde Ionic
+// Lee el JSON desde Ionic
 $input = json_decode(file_get_contents("php://input"), true);
 
 if (!is_array($input)) {
@@ -69,7 +69,7 @@ $permisos = [
 
 try {
 
-    // 1) Verificar usuario
+    // Verificar usuario
     $stmt = $pdo->prepare("
         SELECT id, nombre, apellido, tipo_persona
         FROM credenciales
@@ -84,7 +84,7 @@ try {
     }
 
     $credencialId = $user["id"];
-    $tipoPersona = $user["tipo_persona"]; // ESTUDIANTE, PROFESOR…
+    $tipoPersona = $user["tipo_persona"]; // ESTUDIANTE, PROFESOR, EMPLEADO, VISITANTE 
 
     // ======================================
     // VALIDACIÓN 1: ¿Puede entrar a esa área?
